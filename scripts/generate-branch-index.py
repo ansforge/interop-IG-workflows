@@ -140,7 +140,7 @@ page_html = f"""<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <h1>{html.escape(repo)} — previews ci-build</h1>
+  <h1><a href="https://github.com/{urllib.parse.quote(repo)}">{html.escape(repo)}</a> — previews ci-build</h1>
   {notice}
   <table>
     <thead><tr><th>Branche</th><th>Dernière mise à jour (heure de Paris)</th></tr></thead>
