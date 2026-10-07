@@ -20,12 +20,12 @@ Fixture d'IG minimale (`ig.ini`, `sushi-config.yaml` placeholder, `input/pagecon
 
 ## `generate-branch-index.py`
 
-Interroge l'API GitHub REST pour générer la page de listing des branches publiées sur `gh-pages` (affichée à la racine du site ci-build, `https://ansforge.github.io/{repo}/`) : branche par défaut du repo en tête, autres branches triées par date de dernière mise à jour décroissante. Détecte récursivement les dossiers de branches (marqueur : présence d'un sous-dossier `ig/`), pour gérer les noms de branches contenant des "/" (ex. `feat/ma-feature`). Ne fait jamais échouer le build : en cas d'erreur de l'API GitHub (rate limit, 5xx, réseau), se rabat sur une page limitée à la branche en cours de build.
+Interroge l'API GitHub REST pour générer la page de listing des branches publiées sur `gh-pages` (affichée à la racine du site ci-build, `https://ansforge.github.io/{repo}/`) : branche par défaut du repo en tête, autres branches triées par date de dernière mise à jour décroissante (dates affichées en heure de Paris, `zoneinfo`). Détecte récursivement les dossiers de branches (marqueur : présence d'un sous-dossier `ig/`), pour gérer les noms de branches contenant des "/" (ex. `feat/ma-feature`). Ne fait jamais échouer le build : en cas d'erreur de l'API GitHub (rate limit, 5xx, réseau), se rabat sur une page limitée à la branche en cours de build. Si une `canonical_url` est fournie, affiche un bandeau rappelant qu'il s'agit de previews d'intégration continue et pointant vers l'IG officiellement publié.
 
 Requiert Python 3 (stdlib uniquement) et la variable d'environnement `GITHUB_TOKEN`.
 
-- **Entrées** : `<owner/repo> <branche en cours de build> <chemin du fichier .html de sortie>`
-- **Appelé par** : `action.yml`, étape "Generate site root listing page", quand l'input `github_page: true`
+- **Entrées** : `<owner/repo> <branche en cours de build> <chemin du fichier .html de sortie> [<canonical_url>]` — `canonical_url` est optionnelle (le bandeau est simplement omis si absente/vide)
+- **Appelé par** : `action.yml`, étape "Generate site root listing page", quand l'input `github_page: true` (passe la `canonical` lue dans `sushi-config.yaml` du repo IG)
 
 ## `plantuml/`
 

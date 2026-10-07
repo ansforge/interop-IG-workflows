@@ -1,4 +1,4 @@
-#python3 generate-branch-index.py <repo> <current_branch> <output_html_path>
+#python3 generate-branch-index.py <repo> <current_branch> <output_html_path> <canonical_url>
 import html
 import json
 import os
@@ -7,6 +7,9 @@ import urllib.request
 import urllib.error
 import urllib.parse
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+PARIS_TZ = ZoneInfo("Europe/Paris")
 
 def safe_path(path):
     resolved = os.path.realpath(path)
@@ -22,6 +25,9 @@ current_branch = sys.argv[2]
 # output_path est fourni par action.yml (valeur fixe "./to_publish_root/index.html"), jamais par
 # un utilisateur externe — on vérifie tout de même qu'il reste dans le répertoire de travail courant.
 output_path = safe_path(sys.argv[3])
+
+# Canonical URL de l'IG (lue depuis sushi-config.yaml par action.yml) — vide si absente/non trouvée.
+canonical_url = sys.argv[4] if len(sys.argv) > 4 else ""
 
 token = os.environ["GITHUB_TOKEN"]
 
@@ -100,7 +106,8 @@ ordered = ([default_branch] if default_branch in branches else []) + others
 def fmt(date_str):
     if not date_str:
         return "—"
-    return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%SZ").strftime("%d/%m/%Y %H:%M UTC")
+    dt = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return dt.astimezone(PARIS_TZ).strftime("%d/%m/%Y %H:%M")
 
 
 rows = "\n".join(
@@ -109,6 +116,14 @@ rows = "\n".join(
     f'<td>{fmt(branches[name])}</td>'
     f"</tr>"
     for name in ordered
+)
+
+notice = (
+    f'<p class="notice">⚠️ Ces previews sont des versions de développement (intégration continue), '
+    f'générées automatiquement à chaque modification du dépôt, à des fins de consultation uniquement. '
+    f'Version officielle publiée (actuelle ou à venir) : '
+    f'<a href="{html.escape(canonical_url)}">{html.escape(canonical_url)}</a></p>'
+    if canonical_url else ""
 )
 
 page_html = f"""<!DOCTYPE html>
@@ -121,12 +136,14 @@ page_html = f"""<!DOCTYPE html>
     table {{ border-collapse: collapse; width: 100%; max-width: 640px; }}
     th, td {{ text-align: left; padding: 0.5rem 1rem; border-bottom: 1px solid #ddd; }}
     tr.default td {{ font-weight: bold; }}
+    .notice {{ background-color: #fff9e6; border-left: 4px solid #ff9800; padding: 0.75rem 1rem; max-width: 640px; }}
   </style>
 </head>
 <body>
   <h1>{html.escape(repo)} — previews ci-build</h1>
+  {notice}
   <table>
-    <thead><tr><th>Branche</th><th>Dernière mise à jour</th></tr></thead>
+    <thead><tr><th>Branche</th><th>Dernière mise à jour (heure de Paris)</th></tr></thead>
     <tbody>
 {rows}
     </tbody>
