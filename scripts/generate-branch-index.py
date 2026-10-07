@@ -8,14 +8,20 @@ import urllib.error
 import urllib.parse
 from datetime import datetime, timezone
 
+def safe_path(path):
+    resolved = os.path.realpath(path)
+    base_dir = os.path.realpath(os.getcwd())
+    if resolved != base_dir and not resolved.startswith(base_dir + os.sep):
+        raise ValueError(f"path {path!r} is outside the allowed directory")
+    return resolved
+
+
 repo = sys.argv[1]
 current_branch = sys.argv[2]
 
 # output_path est fourni par action.yml (valeur fixe "./to_publish_root/index.html"), jamais par
 # un utilisateur externe — on vérifie tout de même qu'il reste dans le répertoire de travail courant.
-output_path = os.path.abspath(sys.argv[3])
-if os.path.commonpath([output_path, os.getcwd()]) != os.getcwd():
-    raise ValueError(f"output_path doit rester dans le répertoire de travail courant : {output_path}")
+output_path = safe_path(sys.argv[3])
 
 token = os.environ["GITHUB_TOKEN"]
 
