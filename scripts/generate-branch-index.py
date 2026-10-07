@@ -1,4 +1,5 @@
 #python3 generate-branch-index.py <repo> <current_branch> <output_html_path>
+import html
 import json
 import os
 import sys
@@ -9,7 +10,13 @@ from datetime import datetime, timezone
 
 repo = sys.argv[1]
 current_branch = sys.argv[2]
-output_path = sys.argv[3]
+
+# output_path est fourni par action.yml (valeur fixe "./to_publish_root/index.html"), jamais par
+# un utilisateur externe — on vérifie tout de même qu'il reste dans le répertoire de travail courant.
+output_path = os.path.abspath(sys.argv[3])
+if os.path.commonpath([output_path, os.getcwd()]) != os.getcwd():
+    raise ValueError(f"output_path doit rester dans le répertoire de travail courant : {output_path}")
+
 token = os.environ["GITHUB_TOKEN"]
 
 API = "https://api.github.com"
@@ -46,22 +53,31 @@ def find_branches(path=""):
     niveaux de répertoires intermédiaires dans gh-pages — un dossier de premier niveau comme
     "feat/" n'est donc pas forcément une branche. Le dossier "ig/" (toujours créé par l'action
     pour chaque branche publiée) sert de marqueur fiable pour identifier une feuille.
+    La racine elle-même n'est jamais une feuille (même si une branche s'appelle littéralement
+    "ig", auquel cas on continue de descendre dans ce dossier comme dans les autres).
     """
     listing = api_get(f"/repos/{repo}/contents/{path}?ref=gh-pages" if path else f"/repos/{repo}/contents?ref=gh-pages")
     dirs = [e["name"] for e in (listing or []) if e["type"] == "dir"]
-    if "ig" in dirs:
-        return [path] if path else []
+    if path and "ig" in dirs:
+        return [path]
     found = []
     for name in dirs:
         found.extend(find_branches(f"{path}/{name}" if path else name))
     return found
 
 
-# La branche par défaut du repo (ex. "main") est exposée nativement par l'API GitHub —
-# inutile de la redemander via un input d'action.
-default_branch = api_get(f"/repos/{repo}")["default_branch"]
-
-branches = {branch_path: last_update(branch_path) for branch_path in find_branches()}
+try:
+    # La branche par défaut du repo (ex. "main") est exposée nativement par l'API GitHub —
+    # inutile de la redemander via un input d'action.
+    default_branch = api_get(f"/repos/{repo}")["default_branch"]
+    branches = {branch_path: last_update(branch_path) for branch_path in find_branches()}
+except Exception as e:
+    # Un hoquet de l'API GitHub (rate limit, 5xx, erreur réseau) ne doit pas faire échouer
+    # la publication de l'IG pour une simple page de confort : on se rabat sur la branche
+    # en cours de build uniquement.
+    print(f"::warning::Impossible de lister les branches publiées via l'API GitHub ({e}) — page de listing limitée à la branche courante.", file=sys.stderr)
+    default_branch = current_branch
+    branches = {}
 
 # La branche en cours de build vient d'être publiée (étape précédente) : on force sa date à "maintenant"
 # plutôt que de se fier à l'API, qui peut avoir un léger délai de propagation après le push.
@@ -83,17 +99,17 @@ def fmt(date_str):
 
 rows = "\n".join(
     f'<tr class="{"default" if name == default_branch else ""}">'
-    f'<td><a href="./{name}/ig/">{name}</a>{" (défaut)" if name == default_branch else ""}</td>'
+    f'<td><a href="./{urllib.parse.quote(name)}/ig/">{html.escape(name)}</a>{" (défaut)" if name == default_branch else ""}</td>'
     f'<td>{fmt(branches[name])}</td>'
     f"</tr>"
     for name in ordered
 )
 
-html = f"""<!DOCTYPE html>
+page_html = f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <title>{repo} — previews ci-build</title>
+  <title>{html.escape(repo)} — previews ci-build</title>
   <style>
     body {{ font-family: sans-serif; margin: 2rem; }}
     table {{ border-collapse: collapse; width: 100%; max-width: 640px; }}
@@ -102,7 +118,7 @@ html = f"""<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <h1>{repo} — previews ci-build</h1>
+  <h1>{html.escape(repo)} — previews ci-build</h1>
   <table>
     <thead><tr><th>Branche</th><th>Dernière mise à jour</th></tr></thead>
     <tbody>
@@ -114,4 +130,4 @@ html = f"""<!DOCTYPE html>
 """
 
 with open(output_path, "w") as f:
-    f.write(html)
+    f.write(page_html)
