@@ -18,6 +18,15 @@ Fixture d'IG minimale (`ig.ini`, `sushi-config.yaml` placeholder, `input/pagecon
 
 - **Appelé par** : `Dockerfile` (étape de warmup)
 
+## `generate-branch-index.py`
+
+Interroge l'API GitHub REST pour générer la page de listing des branches publiées sur `gh-pages` (affichée à la racine du site ci-build, `https://ansforge.github.io/{repo}/`) : branche par défaut du repo en tête, autres branches triées par date de dernière mise à jour décroissante. Détecte récursivement les dossiers de branches (marqueur : présence d'un sous-dossier `ig/`), pour gérer les noms de branches contenant des "/" (ex. `feat/ma-feature`). Ne fait jamais échouer le build : en cas d'erreur de l'API GitHub (rate limit, 5xx, réseau), se rabat sur une page limitée à la branche en cours de build.
+
+Requiert Python 3 (stdlib uniquement) et la variable d'environnement `GITHUB_TOKEN`.
+
+- **Entrées** : `<owner/repo> <branche en cours de build> <chemin du fichier .html de sortie>`
+- **Appelé par** : `action.yml`, étape "Generate site root listing page", quand l'input `github_page: true`
+
 ## `plantuml/`
 
 Scripts Python qui interrogent la base sqlite `package.db` (générée par l'IG Publisher dans `output/`) pour produire des diagrammes PlantUML **additionnels** montrant les liens entre les artefacts FHIR d'un IG. Ces diagrammes ne remplacent pas la génération native de diagrammes PlantUML de l'IG Publisher (voir la [documentation HL7](https://build.fhir.org/ig/FHIR/ig-guidance/diagrams-plantuml.html)).

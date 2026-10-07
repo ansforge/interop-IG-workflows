@@ -504,6 +504,26 @@ runs:
         run: |
           echo "**/full-ig.zip" > ./to_publish/.gitignore
 
+      # Page de redirection du dossier de la branche (/<branche>/) vers son contenu IG (/<branche>/ig/).
+      - name: Create branch root redirect
+        if: ${{ inputs.github_page == 'true' }}
+        shell: bash
+        run: |
+          cat > ./to_publish/index.html <<'EOF'
+          <!DOCTYPE html>
+          <html lang="fr">
+          <head>
+            <meta charset="utf-8">
+            <meta http-equiv="refresh" content="0; url=./ig/">
+            <link rel="canonical" href="./ig/">
+            <title>Redirection</title>
+          </head>
+          <body>
+            <p>Redirection vers <a href="./ig/">./ig/</a>…</p>
+          </body>
+          </html>
+          EOF
+
       # Déploiement de l'IG (et artefacts optionnels) sur la branche gh-pages du repo.
       # Chaque branche source obtient son propre sous-répertoire dans gh-pages.
       - name: 🚀 Deploy to GitHub-Pages
@@ -515,6 +535,37 @@ runs:
           destination_dir: ${{ steps.branch-name.outputs.current_branch }}
           exclude_assets: '**.zip,**.tgz,**.pack'
           commit_message: ' ${{ github.event.head_commit.message }}'
+
+      # Génère la page de listing des branches publiées (racine du site), branche par défaut en tête,
+      # les autres triées par date de dernière mise à jour décroissante.
+      # continue-on-error: true — cette page est une fonctionnalité de confort ; un hoquet de l'API
+      # GitHub (rate limit, 5xx) ne doit jamais faire échouer la publication de l'IG elle-même, déjà
+      # effectuée par l'étape précédente.
+      - name: Generate site root listing page
+        if: ${{ inputs.github_page == 'true' }}
+        shell: bash
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ inputs.github_page_token }}
+        run: |
+          mkdir -p ./to_publish_root
+          python3 "${{ github.action_path }}/scripts/generate-branch-index.py" \
+            "${{ github.repository }}" \
+            "${{ steps.branch-name.outputs.current_branch }}" \
+            ./to_publish_root/index.html
+
+      # Déploiement de la page de listing racine — à chaque build (nouvelle branche ou mise à jour de date).
+      # keep_files: true est indispensable : sans destination_dir, ce déploiement cible la racine de
+      # gh-pages et écraserait les sous-répertoires des autres branches si les fichiers existants
+      # n'étaient pas conservés.
+      - name: 🚀 Deploy site root listing to GitHub-Pages
+        if: ${{ inputs.github_page == 'true' }}
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ inputs.github_page_token }}
+          publish_dir: ./to_publish_root
+          keep_files: true
+          commit_message: 'Update branch index'
 
 #####Release###########
 

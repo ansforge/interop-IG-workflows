@@ -141,6 +141,10 @@ Les éléments générés sont publiés sur les pages github (branch gh-pages) a
 
 Les pages sont accessibles via : `https://ansforge.github.io/{nom du repo}/{nom de la branche}/ig/`
 
+`https://ansforge.github.io/{nom du repo}/{nom de la branche}/` redirige automatiquement vers cette URL.
+
+`https://ansforge.github.io/{nom du repo}/` affiche une page de listing de toutes les branches publiées (previews ci-build), avec la branche par défaut du repo en tête, et le reste trié par date de dernière mise à jour décroissante. Cette page est générée par `scripts/generate-branch-index.py`, qui interroge l'API GitHub pour lister les branches déjà publiées dans gh-pages.
+
 ### Génération de release pour publication
 Principes : 
 - Création de la version courante
