@@ -380,8 +380,11 @@ runs:
           REPO_IG: ${{ inputs.repo_ig }}
           GENERATE_PLANTUML: ${{ inputs.generate_plantuml }}
           GENERATE_MAPPING: ${{ inputs.generate_mapping_plantuml }}
-          ACTION_PATH: ${{ github.action_path }}
         run: |
+          # $GITHUB_ACTION_PATH (variable d'environnement) plutôt que ${{ github.action_path }} (contexte) :
+          # ce contexte ne se résout pas correctement dans un job exécuté en conteneur
+          # (bug connu du runner GitHub Actions, https://github.com/actions/runner/issues/716).
+          ACTION_PATH="$GITHUB_ACTION_PATH"
           pids=()
 
           if [ "$GENERATE_PLANTUML" = "true" ]; then
@@ -548,8 +551,11 @@ runs:
         env:
           GITHUB_TOKEN: ${{ inputs.github_page_token }}
         run: |
+          # $GITHUB_ACTION_PATH (variable d'environnement) plutôt que ${{ github.action_path }} (contexte) :
+          # ce contexte ne se résout pas correctement dans un job exécuté en conteneur
+          # (bug connu du runner GitHub Actions, https://github.com/actions/runner/issues/716).
           mkdir -p ./to_publish_root
-          python3 "${{ github.action_path }}/scripts/generate-branch-index.py" \
+          python3 "$GITHUB_ACTION_PATH/scripts/generate-branch-index.py" \
             "${{ github.repository }}" \
             "${{ steps.branch-name.outputs.current_branch }}" \
             ./to_publish_root/index.html
