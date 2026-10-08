@@ -671,7 +671,12 @@ runs:
             echo "${DELIMITER}"
           } >> "$GITHUB_ENV"
 
-      # Création de la release GitHub avec les artefacts full-ig.zip et package.tgz.
+      # Création de la release GitHub avec les artefacts générés par le Publisher
+      # (full-ig.zip, package.tgz, definitions/examples en json et xml). Ces archives
+      # ne sont pas committées sur IG-website-release (son .gitignore exclut les *.zip
+      # pour limiter la taille du repo) : elles sont donc hébergées ici, sur la release
+      # GitHub du repo source. Les liens de downloads.html ne pointent pas encore vers
+      # ces assets (sujet traité séparément).
       - name: Create release
         if: ${{ inputs.publish_repo != '' }}
         shell: bash
@@ -679,14 +684,23 @@ runs:
           PUBLISH_PATH: ${{ inputs.publish_path_outpout }}
           GH_TOKEN: ${{ inputs.github_page_token }}
         run: |
-          gh release create "${{ fromJson(env.PACKAGE_JSON).version }}" -t "Release : ${{ fromJson(env.PACKAGE_JSON).version }}" --generate-notes --repo="$GITHUB_REPOSITORY"
+          VERSION="${{ fromJson(env.PACKAGE_JSON).version }}"
+          gh release create "$VERSION" -t "Release : $VERSION" --generate-notes --repo="$GITHUB_REPOSITORY"
 
           regex='^https?:\/\/[A-Za-z0-9:.]*\/(?:.+\/)*?([^\/]+\/[^\/]+)\/?$'
           [[ ${{ fromJson(env.PACKAGE_JSON).path }} =~ $regex ]]
           file_path=${BASH_REMATCH[1]}
-          echo "${PUBLISH_PATH}/${file_path}/full-ig.zip"
-          gh release upload "${{ fromJson(env.PACKAGE_JSON).version }}" "${PUBLISH_PATH}/${file_path}/full-ig.zip" --repo="$GITHUB_REPOSITORY"
-          gh release upload "${{ fromJson(env.PACKAGE_JSON).version }}" "${PUBLISH_PATH}${file_path}/package.tgz" --repo="$GITHUB_REPOSITORY"
+          ARTIFACT_DIR="${PUBLISH_PATH}/${file_path}"
+
+          for artifact in full-ig.zip package.tgz definitions.json.zip examples.json.zip definitions.xml.zip examples.xml.zip; do
+            artifact_path="${ARTIFACT_DIR}/${artifact}"
+            if [ -f "$artifact_path" ]; then
+              echo "$artifact_path"
+              gh release upload "$VERSION" "$artifact_path" --repo="$GITHUB_REPOSITORY"
+            else
+              echo "::warning::Artefact non trouvé, upload ignoré : $artifact_path"
+            fi
+          done
 
 
 branding:
