@@ -53,13 +53,7 @@ def api_get(path):
 
 
 def load_branch_dates():
-    """Charge le manifeste des dates de dernière publication par branche.
-
-    Depuis le passage au squash de gh-pages (1 seul commit par run), `git log` ne permet plus
-    de retrouver la date de publication de chaque branche individuellement — ce manifeste est
-    la seule source de vérité, maintenue par action.yml (lu depuis le clone gh-pages avant le
-    squash, réécrit après chaque run) et persisté dans le commit orphelin.
-    """
+    # Seule source de date par branche depuis le squash de gh-pages à 1 commit (git log ne suffit plus).
     try:
         with open(branch_dates_path) as f:
             return json.load(f)
@@ -105,8 +99,7 @@ except Exception as e:
 # La branche en cours de build vient d'être publiée (étape précédente) : on force sa date à "maintenant".
 branches[current_branch] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-# Persiste le manifeste (mis à jour pour la branche courante, préservé pour les autres) dans le
-# clone gh-pages — action.yml l'inclura dans le commit orphelin du squash.
+# Persiste le manifeste dans le clone gh-pages — action.yml l'inclura dans le commit orphelin.
 stored_dates.update(branches)
 with open(branch_dates_path, "w") as f:
     json.dump(stored_dates, f, indent=2, sort_keys=True)
