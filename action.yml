@@ -590,7 +590,7 @@ runs:
           # 7) Commit orphelin unique, push avec --force-with-lease (filet anti-course, complète la concurrency: du workflow appelant).
           git -C "$WORKDIR" checkout --orphan gh-pages-squash -q
           git -C "$WORKDIR" add -A
-          git -C "$WORKDIR" commit -q -m " ${COMMIT_MSG}"
+          git -C "$WORKDIR" commit -q -m "${COMMIT_MSG:-Squash-deploy $CURRENT_BRANCH ($GITHUB_EVENT_NAME)}"
           git -C "$WORKDIR" push --force-with-lease="refs/heads/gh-pages:${BASE_SHA}" \
             "$REMOTE_URL" gh-pages-squash:refs/heads/gh-pages
 
