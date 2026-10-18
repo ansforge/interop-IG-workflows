@@ -500,13 +500,6 @@ runs:
               echo "| **Total** | **$(fmt $((T_END - T_ACTION_START)))** |"
           } >> $GITHUB_STEP_SUMMARY
 
-      # Exclusion des archives lourdes du commit gh-pages pour limiter la taille du repo.
-      - name: Create .gitignore for gh-pages
-        if: ${{ inputs.github_page == 'true' }}
-        shell: bash
-        run: |
-          echo "**/full-ig.zip" > ./to_publish/.gitignore
-
       # Page de redirection du dossier de la branche (/<branche>/) vers son contenu IG (/<branche>/ig/).
       - name: Create branch root redirect
         if: ${{ inputs.github_page == 'true' }}
@@ -527,54 +520,101 @@ runs:
           </html>
           EOF
 
-      # Déploiement de l'IG (et artefacts optionnels) sur la branche gh-pages du repo.
-      # Chaque branche source obtient son propre sous-répertoire dans gh-pages.
-      - name: 🚀 Deploy to GitHub-Pages
-        if: ${{ inputs.github_page == 'true' }}
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ inputs.github_page_token }}
-          publish_dir: ./to_publish
-          destination_dir: ${{ steps.branch-name.outputs.current_branch }}
-          exclude_assets: '**.zip,**.tgz,**.pack'
-          commit_message: ' ${{ github.event.head_commit.message }}'
-
-      # Génère la page de listing des branches publiées (racine du site), branche par défaut en tête,
-      # les autres triées par date de dernière mise à jour décroissante.
-      # continue-on-error: true — cette page est une fonctionnalité de confort ; un hoquet de l'API
-      # GitHub (rate limit, 5xx) ne doit jamais faire échouer la publication de l'IG elle-même, déjà
-      # effectuée par l'étape précédente.
-      - name: Generate site root listing page
+      # Déploiement squashé de gh-pages : un seul commit orphelin par run, contenant le cumul de
+      # toutes les previews de branches + la page racine — jamais d'historique cumulatif.
+      #
+      # peaceiris/actions-gh-pages@v4 (utilisé auparavant) ne convient pas pour ça : son option
+      # force_orphan ne clone JAMAIS la branche distante existante (git init + checkout --orphan
+      # sur un repo vide, keep_files ignoré dans ce chemin de code), donc l'activer effacerait les
+      # previews de toutes les autres branches à chaque run. On récupère donc nous-mêmes l'état
+      # courant en shallow (depth=1, un seul commit suffit) puis on le fusionne manuellement.
+      - name: 🚀 Squash-deploy gh-pages (1 commit, toutes branches préservées)
         if: ${{ inputs.github_page == 'true' }}
         shell: bash
-        continue-on-error: true
         env:
+          GH_TOKEN: ${{ inputs.github_page_token }}
           GITHUB_TOKEN: ${{ inputs.github_page_token }}
+          REPO: ${{ github.repository }}
+          CURRENT_BRANCH: ${{ steps.branch-name.outputs.current_branch }}
           REPO_IG: ${{ inputs.repo_ig }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          # $GITHUB_ACTION_PATH (variable d'environnement) plutôt que ${{ github.action_path }} (contexte) :
-          # ce contexte ne se résout pas correctement dans un job exécuté en conteneur
-          # (bug connu du runner GitHub Actions, https://github.com/actions/runner/issues/716).
-          mkdir -p ./to_publish_root
+          set -euo pipefail
+
+          REMOTE_URL="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          WORKDIR="gh-pages-deploy"
+          rm -rf "$WORKDIR"
+
+          # 1) État actuel de gh-pages en shallow (1 commit, pas d'historique) — gère le cas où
+          #    la branche n'existe pas encore (premier déploiement).
+          BASE_SHA=""
+          if BASE_SHA=$(git ls-remote --heads "$REMOTE_URL" gh-pages | cut -f1) && [ -n "$BASE_SHA" ]; then
+            git clone --quiet --depth 1 --branch gh-pages --single-branch "$REMOTE_URL" "$WORKDIR"
+          else
+            echo "ℹ️ Branche gh-pages introuvable — premier déploiement."
+            mkdir -p "$WORKDIR"
+            git -C "$WORKDIR" init -q -b gh-pages
+            BASE_SHA=""
+          fi
+          git -C "$WORKDIR" config user.name  "github-actions"
+          git -C "$WORKDIR" config user.email "github-actions@esante.gouv.fr"
+
+          # 2) Remplace uniquement le sous-dossier de la branche courante (équivalent
+          #    destination_dir + exclude_assets '**.zip,**.tgz,**.pack' de peaceiris), avec
+          #    exclusions défensives *.jar / input-cache (cf. incident publisher.jar 220 Mo
+          #    committé par erreur sur gh-pages).
+          rm -rf -- "$WORKDIR/$CURRENT_BRANCH"
+          mkdir -p "$WORKDIR/$CURRENT_BRANCH"
+          cp -a to_publish/. "$WORKDIR/$CURRENT_BRANCH/"
+          find "$WORKDIR/$CURRENT_BRANCH" -type f \
+            \( -name '*.zip' -o -name '*.tgz' -o -name '*.pack' -o -name '*.jar' \) -delete
+          rm -rf -- "$WORKDIR/$CURRENT_BRANCH/input-cache"
+
+          # 3) Génère la page de listing des branches publiées (racine du site), à partir du
+          #    manifeste gh-pages-deploy/branch-dates.json plutôt que de l'historique git — après
+          #    squash, gh-pages n'a plus qu'un seul commit, donc git log ne peut plus dater
+          #    chaque branche individuellement. Le script lit/écrit ce manifeste lui-même.
+          # $GITHUB_ACTION_PATH (variable d'environnement) plutôt que ${{ github.action_path }}
+          # (contexte) : ce contexte ne se résout pas correctement dans un job exécuté en
+          # conteneur (bug connu du runner GitHub Actions, https://github.com/actions/runner/issues/716).
+          mkdir -p to_publish_root
           CANONICAL_URL=$(grep -m1 '^canonical:' "$REPO_IG/sushi-config.yaml" | cut -d: -f2- | xargs || true)
           python3 "$GITHUB_ACTION_PATH/scripts/generate-branch-index.py" \
-            "${{ github.repository }}" \
-            "${{ steps.branch-name.outputs.current_branch }}" \
-            ./to_publish_root/index.html \
+            "$REPO" \
+            "$CURRENT_BRANCH" \
+            "$WORKDIR/branch-dates.json" \
+            to_publish_root/index.html \
             "$CANONICAL_URL"
 
-      # Déploiement de la page de listing racine — à chaque build (nouvelle branche ou mise à jour de date).
-      # keep_files: true est indispensable : sans destination_dir, ce déploiement cible la racine de
-      # gh-pages et écraserait les sous-répertoires des autres branches si les fichiers existants
-      # n'étaient pas conservés.
-      - name: 🚀 Deploy site root listing to GitHub-Pages
-        if: ${{ inputs.github_page == 'true' }}
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ inputs.github_page_token }}
-          publish_dir: ./to_publish_root
-          keep_files: true
-          commit_message: 'Update branch index'
+          # 4) Overlay de la page racine (équivalent keep_files: true — n'écrase que ce qui est
+          #    fourni, préserve les sous-dossiers des autres branches).
+          cp -a to_publish_root/. "$WORKDIR/"
+
+          # 5) .nojekyll — peaceiris le créait implicitement (enable_jekyll non positionné) ;
+          #    indispensable pour que GitHub Pages ne traite pas l'arbre avec Jekyll.
+          touch "$WORKDIR/.nojekyll"
+
+          # 6) Garde-fou anti-fichier-volumineux (limite dure GitHub : 100 Mo/fichier). Échec
+          #    explicite ici plutôt qu'un rejet confus côté serveur — c'est exactement ce qui
+          #    s'est produit avec input-cache/publisher.jar (220 Mo).
+          BIG_FILES=$(find "$WORKDIR" -path "$WORKDIR/.git" -prune -o -type f -size +100M -print)
+          if [ -n "$BIG_FILES" ]; then
+            echo "::error::Fichier(s) > 100 Mo détecté(s) dans l'arbre gh-pages — push annulé."
+            while IFS= read -r f; do
+              echo "::error file=$f::$(du -h "$f" | cut -f1) — vérifier ce qui l'a copié dans to_publish/to_publish_root ou dans le gh-pages existant"
+            done <<< "$BIG_FILES"
+            exit 1
+          fi
+
+          # 7) Commit orphelin unique (sans parent = aucun historique conservé) puis push protégé
+          #    contre une course avec un autre run concurrent : --force-with-lease refuse le push
+          #    si le SHA distant a changé depuis notre checkout (filet de sécurité en complément
+          #    de la concurrency: du workflow appelant — pas un substitut).
+          git -C "$WORKDIR" checkout --orphan gh-pages-squash -q
+          git -C "$WORKDIR" add -A
+          git -C "$WORKDIR" commit -q -m " ${COMMIT_MSG}"
+          git -C "$WORKDIR" push --force-with-lease="refs/heads/gh-pages:${BASE_SHA}" \
+            "$REMOTE_URL" gh-pages-squash:refs/heads/gh-pages
 
 #####Release###########
 

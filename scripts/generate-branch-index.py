@@ -1,4 +1,4 @@
-#python3 generate-branch-index.py <repo> <current_branch> <output_html_path> <canonical_url>
+#python3 generate-branch-index.py <repo> <current_branch> <branch_dates_json_path> <output_html_path> <canonical_url>
 import html
 import json
 import os
@@ -22,12 +22,13 @@ def safe_path(path):
 repo = sys.argv[1]
 current_branch = sys.argv[2]
 
-# output_path est fourni par action.yml (valeur fixe "./to_publish_root/index.html"), jamais par
-# un utilisateur externe — on vérifie tout de même qu'il reste dans le répertoire de travail courant.
-output_path = safe_path(sys.argv[3])
+# branch_dates_path et output_path sont fournis par action.yml (valeurs fixes), jamais par un
+# utilisateur externe — on vérifie tout de même qu'ils restent dans le répertoire de travail courant.
+branch_dates_path = safe_path(sys.argv[3])
+output_path = safe_path(sys.argv[4])
 
 # Canonical URL de l'IG (lue depuis sushi-config.yaml par action.yml) — vide si absente/non trouvée.
-canonical_url = sys.argv[4] if len(sys.argv) > 4 else ""
+canonical_url = sys.argv[5] if len(sys.argv) > 5 else ""
 
 token = os.environ["GITHUB_TOKEN"]
 
@@ -51,11 +52,19 @@ def api_get(path):
         raise
 
 
-def last_update(branch_path):
-    commits = api_get(f"/repos/{repo}/commits?path={urllib.parse.quote(branch_path)}&sha=gh-pages&per_page=1")
-    if not commits:
-        return None
-    return commits[0]["commit"]["committer"]["date"]
+def load_branch_dates():
+    """Charge le manifeste des dates de dernière publication par branche.
+
+    Depuis le passage au squash de gh-pages (1 seul commit par run), `git log` ne permet plus
+    de retrouver la date de publication de chaque branche individuellement — ce manifeste est
+    la seule source de vérité, maintenue par action.yml (lu depuis le clone gh-pages avant le
+    squash, réécrit après chaque run) et persisté dans le commit orphelin.
+    """
+    try:
+        with open(branch_dates_path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
 
 def find_branches(path=""):
@@ -78,11 +87,13 @@ def find_branches(path=""):
     return found
 
 
+stored_dates = load_branch_dates()
+
 try:
     # La branche par défaut du repo (ex. "main") est exposée nativement par l'API GitHub —
     # inutile de la redemander via un input d'action.
     default_branch = api_get(f"/repos/{repo}")["default_branch"]
-    branches = {branch_path: last_update(branch_path) for branch_path in find_branches()}
+    branches = {branch_path: stored_dates.get(branch_path) for branch_path in find_branches()}
 except Exception as e:
     # Un hoquet de l'API GitHub (rate limit, 5xx, erreur réseau) ne doit pas faire échouer
     # la publication de l'IG pour une simple page de confort : on se rabat sur la branche
@@ -91,9 +102,14 @@ except Exception as e:
     default_branch = current_branch
     branches = {}
 
-# La branche en cours de build vient d'être publiée (étape précédente) : on force sa date à "maintenant"
-# plutôt que de se fier à l'API, qui peut avoir un léger délai de propagation après le push.
+# La branche en cours de build vient d'être publiée (étape précédente) : on force sa date à "maintenant".
 branches[current_branch] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+# Persiste le manifeste (mis à jour pour la branche courante, préservé pour les autres) dans le
+# clone gh-pages — action.yml l'inclura dans le commit orphelin du squash.
+stored_dates.update(branches)
+with open(branch_dates_path, "w") as f:
+    json.dump(stored_dates, f, indent=2, sort_keys=True)
 
 others = sorted(
     (name for name in branches if name != default_branch),
