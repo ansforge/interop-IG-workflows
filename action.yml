@@ -645,7 +645,13 @@ runs:
           else
             PUBLISHER_JAR=publisher.jar
           fi
-          java -jar $PUBLISHER_JAR -go-publish -authorise-non-conformant-tx-servers -source "$REPO_IG" -web "$PUBLISH_PATH" -registry ./IG-website-release/ig-registry/fhir-ig-list.json -history ./IG-website-release/fhir-ig-history-template -templates ./IG-website-release/templates
+          # fhir-ig-publisher >= commit 5c514cef (2026-09-25) exige des chemins absolus pour -go-publish.
+          SOURCE_ABS=$(readlink -f "$REPO_IG")
+          WEB_ABS=$(readlink -f "$PUBLISH_PATH")
+          REGISTRY_ABS=$(readlink -f ./IG-website-release/ig-registry/fhir-ig-list.json)
+          HISTORY_ABS=$(readlink -f ./IG-website-release/fhir-ig-history-template)
+          TEMPLATES_ABS=$(readlink -f ./IG-website-release/templates)
+          java -jar $PUBLISHER_JAR -go-publish -authorise-non-conformant-tx-servers -source "$SOURCE_ABS" -web "$WEB_ABS" -registry "$REGISTRY_ABS" -history "$HISTORY_ABS" -templates "$TEMPLATES_ABS"
 
       # Commit des modifications générées par la publication dans IG-website-release.
       # Le "|| echo" absorbe le cas où rien n'a changé (ex : republication d'une même version).
