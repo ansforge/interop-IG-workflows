@@ -531,6 +531,7 @@ runs:
           CURRENT_BRANCH: ${{ steps.branch-name.outputs.current_branch }}
           REPO_IG: ${{ inputs.repo_ig }}
         run: |
+          # Mode strict : stoppe au premier échec (-e), interdit les variables non définies (-u), propage l'échec dans un pipeline (-o pipefail).
           set -euo pipefail
 
           REMOTE_URL="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
@@ -575,6 +576,7 @@ runs:
           CURRENT_BRANCH: ${{ steps.branch-name.outputs.current_branch }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
+          # Mode strict : stoppe au premier échec (-e), interdit les variables non définies (-u), propage l'échec dans un pipeline (-o pipefail).
           set -euo pipefail
 
           REMOTE_URL="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
