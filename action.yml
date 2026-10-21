@@ -539,7 +539,7 @@ runs:
           WORKDIR="gh-pages-deploy"
           rm -rf "$WORKDIR"
 
-          # 1) Clone gh-pages en shallow si elle existe (sinon repo vide, premier déploiement) ; BASE_SHA sert au --force-with-lease de l'étape 6.
+          # 1) Clone gh-pages en ne récupérant que le dernier commit si elle existe (sinon repo vide, premier déploiement) ; BASE_SHA sert au --force-with-lease de l'étape 6.
           BASE_SHA=""
           if BASE_SHA=$(git ls-remote --heads "$REMOTE_URL" gh-pages | cut -f1) && [ -n "$BASE_SHA" ]; then
             git clone --quiet --depth 1 --branch gh-pages --single-branch "$REMOTE_URL" "$WORKDIR"
