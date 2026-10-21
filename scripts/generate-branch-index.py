@@ -1,4 +1,21 @@
-#python3 generate-branch-index.py <repo> <current_branch> <branch_dates_json_path> <output_html_path> <canonical_url>
+# Génère la page d'accueil de gh-pages : un tableau listant toutes les branches de l'IG déjà
+# publiées en ci-build (une preview par branche, à l'URL ./<branche>/ig/), avec la date de
+# dernière mise à jour de chacune, la branche par défaut du repo mise en avant, et un bandeau
+# d'avertissement pointant vers l'URL canonique si l'IG a déjà une version officiellement publiée.
+#
+# Appelé depuis action.yml, step "🚀 Squash-deploy gh-pages", étape 3 — juste après que ce step
+# ait cloné gh-pages (ou initialisé un repo vide pour un premier déploiement) et copié dedans le
+# contenu fraîchement publié de la branche en cours. La page HTML générée ici est ensuite copiée
+# dans ce même clone et incluse dans le commit orphelin poussé sur gh-pages.
+#
+# Usage : python3 generate-branch-index.py <repo> <current_branch> <branch_dates_json_path> <output_html_path> <canonical_url>
+#   repo                 : "owner/repo" du dépôt GitHub (ex. ansforge/interop-ig-portabilite)
+#   current_branch       : nom de la branche qui vient d'être publiée par ce run
+#   branch_dates_json_path : fichier JSON (dans le clone gh-pages) qui mémorise la date de dernière
+#                            publication de chaque branche — nécessaire car gh-pages n'a plus qu'un
+#                            seul commit (squash), donc `git log` ne peut plus donner ces dates
+#   output_html_path     : chemin où écrire la page HTML générée
+#   canonical_url        : URL de la version officielle de l'IG (optionnel, affiche un bandeau si fourni)
 import html
 import json
 import os
@@ -11,6 +28,9 @@ from zoneinfo import ZoneInfo
 
 PARIS_TZ = ZoneInfo("Europe/Paris")
 
+# Résout un chemin et vérifie qu'il reste bien à l'intérieur du répertoire de travail courant
+# (celui du clone gh-pages), pour éviter d'écrire en dehors de celui-ci si jamais un chemin
+# inattendu (ex. "../../etc/passwd") était un jour passé en argument.
 def safe_path(path):
     resolved = os.path.realpath(path)
     base_dir = os.path.realpath(os.getcwd())
@@ -35,6 +55,8 @@ token = os.environ["GITHUB_TOKEN"]
 API = "https://api.github.com"
 
 
+# Petit wrapper autour de l'API REST GitHub : ajoute l'authentification, décode le JSON de la
+# réponse, et renvoie None sur un 404 (ex. repo/chemin inexistant) au lieu de faire planter l'appelant.
 def api_get(path):
     req = urllib.request.Request(
         f"{API}{path}",
@@ -104,6 +126,8 @@ stored_dates.update(branches)
 with open(branch_dates_path, "w") as f:
     json.dump(stored_dates, f, indent=2, sort_keys=True)
 
+# Ordre d'affichage du tableau : la branche par défaut en premier (si elle a bien été publiée),
+# puis les autres branches triées de la plus récemment publiée à la plus ancienne.
 others = sorted(
     (name for name in branches if name != default_branch),
     key=lambda name: branches[name] or "",
@@ -112,6 +136,8 @@ others = sorted(
 ordered = ([default_branch] if default_branch in branches else []) + others
 
 
+# Convertit une date ISO UTC (ex. "2026-10-20T13:53:25Z") en affichage "JJ/MM/AAAA HH:MM" heure
+# de Paris, ou "—" si la branche n'a pas (encore) de date connue.
 def fmt(date_str):
     if not date_str:
         return "—"
@@ -119,6 +145,9 @@ def fmt(date_str):
     return dt.astimezone(PARIS_TZ).strftime("%d/%m/%Y %H:%M")
 
 
+# Une ligne de tableau par branche : lien vers sa preview, nom (avec suffixe "(défaut)" le cas
+# échéant) et date formatée. html.escape()/urllib.parse.quote() protègent contre un nom de
+# branche contenant des caractères spéciaux HTML ou non valides dans une URL.
 rows = "\n".join(
     f'<tr class="{"default" if name == default_branch else ""}">'
     f'<td><a href="./{urllib.parse.quote(name)}/ig/">{html.escape(name)}</a>{" (défaut)" if name == default_branch else ""}</td>'
@@ -127,6 +156,9 @@ rows = "\n".join(
     for name in ordered
 )
 
+# Bandeau d'avertissement affiché seulement si une URL canonique a été trouvée dans
+# sushi-config.yaml : rappelle que ces pages sont des previews de développement et renvoie vers
+# la version officielle de l'IG.
 notice = (
     f'<p class="notice">⚠️ Ces previews sont des versions de développement (intégration continue), '
     f'générées automatiquement à chaque modification du dépôt, à des fins de consultation uniquement. '
@@ -135,6 +167,8 @@ notice = (
     if canonical_url else ""
 )
 
+# Page HTML complète (CSS inline, pas de dépendance externe) : titre, bandeau d'avertissement
+# éventuel, puis le tableau des branches dans l'ordre calculé plus haut.
 page_html = f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -161,5 +195,7 @@ page_html = f"""<!DOCTYPE html>
 </html>
 """
 
+# Écrit la page générée à l'emplacement attendu par action.yml (to_publish_root/index.html),
+# qui la copiera ensuite à la racine du clone gh-pages.
 with open(output_path, "w") as f:
     f.write(page_html)
