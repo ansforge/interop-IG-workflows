@@ -1,4 +1,13 @@
-#python3 generate-branch-index.py <repo> <current_branch> <branch_dates_json_path> <output_html_path> <canonical_url>
+# Génère la page d'accueil de gh-pages : un tableau listant les branches de l'IG déjà publiées en ci-build (une preview par branche, à l'URL ./<branche>/ig/), avec la date de dernière mise à jour de chacune, la branche par défaut mise en avant, et un bandeau pointant vers l'URL canonique si l'IG a déjà une version officielle.
+#
+# Appelé depuis action.yml, step "🚀 Squash-deploy gh-pages", étape 3, juste après que ce step ait cloné gh-pages (ou initialisé un repo vide pour un premier déploiement) et copié dedans le contenu de la branche en cours ; la page générée ici est ensuite incluse dans le commit orphelin poussé sur gh-pages.
+#
+# Usage : python3 generate-branch-index.py <repo> <current_branch> <branch_dates_json_path> <output_html_path> <canonical_url>
+#   repo                    : "owner/repo" du dépôt GitHub (ex. ansforge/interop-ig-portabilite)
+#   current_branch          : nom de la branche qui vient d'être publiée par ce run
+#   branch_dates_json_path  : fichier JSON (dans le clone gh-pages) qui mémorise la date de dernière publication de chaque branche, car gh-pages n'a plus qu'un seul commit (squash) et `git log` ne suffit plus
+#   output_html_path        : chemin où écrire la page HTML générée
+#   canonical_url           : URL de la version officielle de l'IG (optionnel, affiche un bandeau si fourni)
 import html
 import json
 import os
@@ -11,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 PARIS_TZ = ZoneInfo("Europe/Paris")
 
+# Résout un chemin et vérifie qu'il reste bien à l'intérieur du répertoire de travail courant (celui du clone gh-pages), pour éviter d'écrire en dehors de celui-ci si jamais un chemin inattendu (ex. "../../etc/passwd") était un jour passé en argument.
 def safe_path(path):
     resolved = os.path.realpath(path)
     base_dir = os.path.realpath(os.getcwd())
@@ -22,8 +32,7 @@ def safe_path(path):
 repo = sys.argv[1]
 current_branch = sys.argv[2]
 
-# branch_dates_path et output_path sont fournis par action.yml (valeurs fixes), jamais par un
-# utilisateur externe — on vérifie tout de même qu'ils restent dans le répertoire de travail courant.
+# branch_dates_path et output_path sont fournis par action.yml (valeurs fixes), jamais par un utilisateur externe — on vérifie tout de même qu'ils restent dans le répertoire de travail courant.
 branch_dates_path = safe_path(sys.argv[3])
 output_path = safe_path(sys.argv[4])
 
@@ -35,6 +44,7 @@ token = os.environ["GITHUB_TOKEN"]
 API = "https://api.github.com"
 
 
+# Petit wrapper autour de l'API REST GitHub : ajoute l'authentification, décode le JSON de la réponse, et renvoie None sur un 404 (ex. repo/chemin inexistant) au lieu de faire planter l'appelant.
 def api_get(path):
     req = urllib.request.Request(
         f"{API}{path}",
@@ -62,15 +72,7 @@ def load_branch_dates():
 
 
 def find_branches(path=""):
-    """Descend récursivement dans gh-pages jusqu'à trouver les dossiers de branches.
-
-    Les noms de branches peuvent contenir des "/" (ex. "feat/ma-feature"), ce qui crée des
-    niveaux de répertoires intermédiaires dans gh-pages — un dossier de premier niveau comme
-    "feat/" n'est donc pas forcément une branche. Le dossier "ig/" (toujours créé par l'action
-    pour chaque branche publiée) sert de marqueur fiable pour identifier une feuille.
-    La racine elle-même n'est jamais une feuille (même si une branche s'appelle littéralement
-    "ig", auquel cas on continue de descendre dans ce dossier comme dans les autres).
-    """
+    """Descend récursivement dans gh-pages pour trouver les dossiers de branches : un nom de branche peut contenir des "/" (ex. "feat/ma-feature") donc un dossier de premier niveau n'est pas forcément une branche — seul un dossier contenant "ig/" (toujours créé pour chaque branche publiée) est une feuille, la racine n'en étant jamais une."""
     listing = api_get(f"/repos/{repo}/contents/{path}?ref=gh-pages" if path else f"/repos/{repo}/contents?ref=gh-pages")
     dirs = [e["name"] for e in (listing or []) if e["type"] == "dir"]
     if path and "ig" in dirs:
@@ -84,14 +86,11 @@ def find_branches(path=""):
 stored_dates = load_branch_dates()
 
 try:
-    # La branche par défaut du repo (ex. "main") est exposée nativement par l'API GitHub —
-    # inutile de la redemander via un input d'action.
+    # La branche par défaut du repo (ex. "main") est exposée nativement par l'API GitHub — inutile de la redemander via un input d'action.
     default_branch = api_get(f"/repos/{repo}")["default_branch"]
     branches = {branch_path: stored_dates.get(branch_path) for branch_path in find_branches()}
 except Exception as e:
-    # Un hoquet de l'API GitHub (rate limit, 5xx, erreur réseau) ne doit pas faire échouer
-    # la publication de l'IG pour une simple page de confort : on se rabat sur la branche
-    # en cours de build uniquement.
+    # Un hoquet de l'API GitHub (rate limit, 5xx, erreur réseau) ne doit pas faire échouer la publication de l'IG pour une simple page de confort : on se rabat sur la branche en cours de build uniquement.
     print(f"::warning::Impossible de lister les branches publiées via l'API GitHub ({e}) — page de listing limitée à la branche courante.", file=sys.stderr)
     default_branch = current_branch
     branches = {}
@@ -104,6 +103,7 @@ stored_dates.update(branches)
 with open(branch_dates_path, "w") as f:
     json.dump(stored_dates, f, indent=2, sort_keys=True)
 
+# Ordre d'affichage du tableau : la branche par défaut en premier (si elle a bien été publiée), puis les autres branches triées de la plus récemment publiée à la plus ancienne.
 others = sorted(
     (name for name in branches if name != default_branch),
     key=lambda name: branches[name] or "",
@@ -112,6 +112,7 @@ others = sorted(
 ordered = ([default_branch] if default_branch in branches else []) + others
 
 
+# Convertit une date ISO UTC (ex. "2026-10-20T13:53:25Z") en affichage "JJ/MM/AAAA HH:MM" heure de Paris, ou "—" si la branche n'a pas (encore) de date connue.
 def fmt(date_str):
     if not date_str:
         return "—"
@@ -119,6 +120,7 @@ def fmt(date_str):
     return dt.astimezone(PARIS_TZ).strftime("%d/%m/%Y %H:%M")
 
 
+# Une ligne de tableau par branche : lien vers sa preview, nom (avec suffixe "(défaut)" le cas échéant) et date formatée ; html.escape()/urllib.parse.quote() protègent contre un nom de branche contenant des caractères spéciaux HTML ou non valides dans une URL.
 rows = "\n".join(
     f'<tr class="{"default" if name == default_branch else ""}">'
     f'<td><a href="./{urllib.parse.quote(name)}/ig/">{html.escape(name)}</a>{" (défaut)" if name == default_branch else ""}</td>'
@@ -127,6 +129,7 @@ rows = "\n".join(
     for name in ordered
 )
 
+# Bandeau d'avertissement affiché seulement si une URL canonique a été trouvée dans sushi-config.yaml : rappelle que ces pages sont des previews de développement et renvoie vers la version officielle de l'IG.
 notice = (
     f'<p class="notice">⚠️ Ces previews sont des versions de développement (intégration continue), '
     f'générées automatiquement à chaque modification du dépôt, à des fins de consultation uniquement. '
@@ -135,6 +138,7 @@ notice = (
     if canonical_url else ""
 )
 
+# Page HTML complète (CSS inline, pas de dépendance externe) : titre, bandeau d'avertissement éventuel, puis le tableau des branches dans l'ordre calculé plus haut.
 page_html = f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -161,5 +165,6 @@ page_html = f"""<!DOCTYPE html>
 </html>
 """
 
+# Écrit la page générée à l'emplacement attendu par action.yml (to_publish_root/index.html), qui la copiera ensuite à la racine du clone gh-pages.
 with open(output_path, "w") as f:
     f.write(page_html)
