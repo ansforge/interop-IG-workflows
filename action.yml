@@ -520,9 +520,8 @@ runs:
           </html>
           EOF
 
-      # Déploiement squashé (1 commit orphelin par run) : force_orphan de peaceiris ne clone jamais
-      # la branche distante existante et effacerait donc les previews des autres branches, d'où ce step custom.
-      - name: 🚀 Squash-deploy gh-pages (1 commit, toutes branches préservées)
+      # Prépare le contenu à publier sur gh-pages : clone de l'existant, contenu de la branche courante, page de listing des branches.
+      - name: 📄 Prépare gh-pages (contenu de la branche + page de listing)
         if: ${{ inputs.github_page == 'true' }}
         shell: bash
         env:
@@ -531,15 +530,15 @@ runs:
           REPO: ${{ github.repository }}
           CURRENT_BRANCH: ${{ steps.branch-name.outputs.current_branch }}
           REPO_IG: ${{ inputs.repo_ig }}
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
+          # Mode strict : stoppe au premier échec (-e), interdit les variables non définies (-u), propage l'échec dans un pipeline (-o pipefail).
           set -euo pipefail
 
           REMOTE_URL="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
           WORKDIR="gh-pages-deploy"
           rm -rf "$WORKDIR"
 
-          # 1) État actuel de gh-pages en shallow (gère aussi le cas "branche inexistante", premier déploiement).
+          # 1) Clone gh-pages en ne récupérant que le dernier commit si elle existe (sinon repo vide, premier déploiement) ; BASE_SHA mémorise ce commit et est exporté via $GITHUB_ENV pour que le step suivant (squash-deploy) vérifie avec --force-with-lease que gh-pages n'a pas changé entre-temps (déploiement concurrent d'une autre branche).
           BASE_SHA=""
           if BASE_SHA=$(git ls-remote --heads "$REMOTE_URL" gh-pages | cut -f1) && [ -n "$BASE_SHA" ]; then
             git clone --quiet --depth 1 --branch gh-pages --single-branch "$REMOTE_URL" "$WORKDIR"
@@ -547,50 +546,50 @@ runs:
             echo "ℹ️ Branche gh-pages introuvable — premier déploiement."
             mkdir -p "$WORKDIR"
             git -C "$WORKDIR" init -q -b gh-pages
-            BASE_SHA=""
           fi
-          git -C "$WORKDIR" config user.name  "github-actions"
-          git -C "$WORKDIR" config user.email "github-actions@esante.gouv.fr"
+          echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
 
-          # 2) Remplace le sous-dossier de la branche courante (équivalent destination_dir + exclude_assets de peaceiris).
+          # 2) Remplace le sous-dossier de la branche courante sans toucher aux autres branches déjà publiées ; archives et cache exclus de gh-pages.
           rm -rf -- "$WORKDIR/$CURRENT_BRANCH"
           mkdir -p "$WORKDIR/$CURRENT_BRANCH"
           cp -a to_publish/. "$WORKDIR/$CURRENT_BRANCH/"
-          find "$WORKDIR/$CURRENT_BRANCH" -type f \
-            \( -name '*.zip' -o -name '*.tgz' -o -name '*.pack' -o -name '*.jar' \) -delete
+          find "$WORKDIR/$CURRENT_BRANCH" -type f \( -name '*.zip' -o -name '*.tgz' -o -name '*.pack' -o -name '*.jar' \) -delete
           rm -rf -- "$WORKDIR/$CURRENT_BRANCH/input-cache"
 
-          # 3) Page de listing des branches, datée via branch-dates.json (git log ne suffit plus après squash).
-          # $GITHUB_ACTION_PATH plutôt que ${{ github.action_path }} : ce contexte ne se résout pas dans un conteneur (runner/issues/716).
+          # 3) Régénère la page de listing des branches et la dépose dans le clone ($GITHUB_ACTION_PATH car ${{ github.action_path }} ne se résout pas en conteneur, cf. runner/issues/716).
           mkdir -p to_publish_root
           CANONICAL_URL=$(grep -m1 '^canonical:' "$REPO_IG/sushi-config.yaml" | cut -d: -f2- | xargs || true)
           python3 "$GITHUB_ACTION_PATH/scripts/generate-branch-index.py" \
-            "$REPO" \
-            "$CURRENT_BRANCH" \
-            "$WORKDIR/branch-dates.json" \
-            to_publish_root/index.html \
-            "$CANONICAL_URL"
-
-          # 4) Overlay de la page racine (équivalent keep_files: true, préserve les autres sous-dossiers).
+            "$REPO" "$CURRENT_BRANCH" "$WORKDIR/branch-dates.json" to_publish_root/index.html "$CANONICAL_URL"
           cp -a to_publish_root/. "$WORKDIR/"
 
-          # 5) .nojekyll — peaceiris le créait implicitement, nécessaire pour que Pages ne traite pas l'arbre avec Jekyll.
+          # 4) .nojekyll : empêche GitHub Pages de traiter le site avec Jekyll, qui ignorerait les dossiers commençant par "_".
           touch "$WORKDIR/.nojekyll"
 
-          # 6) Garde-fou anti-fichier-volumineux (limite GitHub : 100 Mo/fichier), cf. incident input-cache/publisher.jar.
-          BIG_FILES=$(find "$WORKDIR" -path "$WORKDIR/.git" -prune -o -type f -size +100M -print)
-          if [ -n "$BIG_FILES" ]; then
-            echo "::error::Fichier(s) > 100 Mo détecté(s) dans l'arbre gh-pages — push annulé."
-            while IFS= read -r f; do
-              echo "::error file=$f::$(du -h "$f" | cut -f1) — vérifier ce qui l'a copié dans to_publish/to_publish_root ou dans le gh-pages existant"
-            done <<< "$BIG_FILES"
-            exit 1
-          fi
+      # Déploiement squashé (1 commit orphelin par run) : force_orphan de peaceiris ne clone jamais la branche distante existante et effacerait donc les previews des autres branches, d'où ce step custom.
+      - name: 🚀 Squash-deploy gh-pages (1 commit, toutes branches préservées)
+        if: ${{ inputs.github_page == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ inputs.github_page_token }}
+          REPO: ${{ github.repository }}
+          CURRENT_BRANCH: ${{ steps.branch-name.outputs.current_branch }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          # Mode strict : stoppe au premier échec (-e), interdit les variables non définies (-u), propage l'échec dans un pipeline (-o pipefail).
+          set -euo pipefail
 
-          # 7) Commit orphelin unique, push avec --force-with-lease (filet anti-course, complète la concurrency: du workflow appelant).
+          REMOTE_URL="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          WORKDIR="gh-pages-deploy"
+          git -C "$WORKDIR" config user.name  "github-actions"
+          git -C "$WORKDIR" config user.email "github-actions@esante.gouv.fr"
+
+          # 1) Un unique commit orphelin : l'historique de gh-pages ne grossit jamais, seul l'état courant compte.
           git -C "$WORKDIR" checkout --orphan gh-pages-squash -q
           git -C "$WORKDIR" add -A
           git -C "$WORKDIR" commit -q -m "${COMMIT_MSG:-Squash-deploy $CURRENT_BRANCH ($GITHUB_EVENT_NAME)}"
+
+          # 2) Push protégé : échoue si gh-pages a changé depuis le step précédent (déploiement concurrent) plutôt que d'écraser silencieusement ; BASE_SHA a été exporté par le step précédent via $GITHUB_ENV.
           git -C "$WORKDIR" push --force-with-lease="refs/heads/gh-pages:${BASE_SHA}" \
             "$REMOTE_URL" gh-pages-squash:refs/heads/gh-pages
 
