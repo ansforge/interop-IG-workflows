@@ -553,7 +553,7 @@ runs:
           rm -rf -- "$WORKDIR/$CURRENT_BRANCH"
           mkdir -p "$WORKDIR/$CURRENT_BRANCH"
           cp -a to_publish/. "$WORKDIR/$CURRENT_BRANCH/"
-          find "$WORKDIR/$CURRENT_BRANCH" -type f \( -name '*.zip' -o -name '*.tgz' -o -name '*.pack' -o -name '*.jar' \) -delete
+          find "$WORKDIR/$CURRENT_BRANCH" -type f \( -name '*.zip' -o -name '*.tgz' -o -name '*.pack' -o -name '*.jar' \) ! -name 'package.tgz' -delete
           rm -rf -- "$WORKDIR/$CURRENT_BRANCH/input-cache"
 
           # 3) Régénère la page de listing des branches et la dépose dans le clone ($GITHUB_ACTION_PATH car ${{ github.action_path }} ne se résout pas en conteneur, cf. runner/issues/716).
