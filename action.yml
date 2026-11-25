@@ -278,7 +278,7 @@ runs:
             PUBLISHER_JAR=../publisher.jar
           fi
           cd "$REPO_IG"
-          java -Xmx8192m -jar $PUBLISHER_JAR -ig . -authorise-non-conformant-tx-servers
+          java -Xmx8192m -jar $PUBLISHER_JAR -ig . -authorise-non-conformant-tx-servers -trust-template https://github.com/ansforge/IG-template
           [ "$ENABLE_TIMING" = "true" ] && echo "T_PUBLISHER_END=$(date +%s)" >> $GITHUB_ENV || true
           mkdir ../to_publish/ig
           cp -r ./output/. ../to_publish/ig
